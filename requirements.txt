@@ -1,4 +1,4 @@
 streamlit==1.32.2
 akshare==1.14.87
 pandas==2.2.1
-requests==2.31.0
+requests
