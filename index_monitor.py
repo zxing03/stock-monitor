@@ -1,81 +1,79 @@
 import streamlit as st
 import akshare as ak
 import pandas as pd
-import pandas_ta as ta
-import datetime
 
-# --- 1. 网页配置 ---
-st.set_page_config(page_title="指数监控系统", layout="wide")
-st.title("📊 指数实时监控系统")
-st.caption("项目目标：零成本、全自定义、全设备访问")
+# -------------------------- 页面配置 --------------------------
+st.set_page_config(page_title="指数监控", layout="wide")
+st.title("📊 沪深300 实时监控系统")
 
-# --- 2. 侧边栏设置 ---
-st.sidebar.header("⚙️ 参数设置")
-target_index = st.sidebar.selectbox("监控标的", ["沪深300 (sh000300)"])
-st.sidebar.markdown("---")
-st.sidebar.subheader("布林线 (BOLL) 参数")
-boll_period = st.sidebar.number_input("计算周期 (n)", value=20)
-boll_std = st.sidebar.number_input("标准差倍数", value=2.0)
+# -------------------------- 侧边栏 --------------------------
+st.sidebar.header("参数设置")
+boll_period = st.sidebar.number_input("BOLL周期", value=20)
+boll_std = st.sidebar.number_input("BOLL标准差", value=2.0)
 
-
-# --- 3. 获取与计算数据 ---
+# -------------------------- 数据获取（缓存） --------------------------
 @st.cache_data(ttl=3600)
-def get_full_analysis():
-    # 获取300天数据确保指标计算稳定
-    df = ak.stock_zh_index_daily(symbol="sh000300")
-    df = df.tail(300)
-    df['date'] = pd.to_datetime(df['date'])
-    df = df.dropna()
-
-    # 使用 pandas_ta 库一次性添加多个指标
-    df.ta.bbands(length=boll_period, std=boll_std, append=True)
-    df.ta.macd(append=True)
-    df.ta.rsi(length=14, append=True)
-
-    # 获取 PE 数据
+def get_data(period, std):
     try:
-        pe_df = ak.stock_zh_index_value_indicator(symbol="sh000300")
-        current_pe = pe_df['pe'].iloc[-1]
-    except:
-        current_pe = "数据同步中"
+        # 获取K线
+        df = ak.stock_zh_index_daily(symbol="sh000300").tail(200)
+        df = df.copy()
+        df["date"] = pd.to_datetime(df["date"])
 
-    return df, current_pe
+        # 布林带
+        df["mid"] = df["close"].rolling(window=period).mean()
+        df["std"] = df["close"].rolling(window=period).std()
+        df["upper"] = df["mid"] + std * df["std"]
+        df["lower"] = df["mid"] - std * df["std"]
 
+        # RSI
+        delta = df["close"].diff()
+        gain = delta.where(delta > 0, 0)
+        loss = -delta.where(delta < 0, 0)
+        avg_gain = gain.rolling(14).mean()
+        avg_loss = loss.rolling(14).mean()
+        rs = avg_gain / avg_loss
+        df["rsi"] = 100 - (100 / (1 + rs))
 
-# --- 4. 主逻辑与异常处理 ---
-try:
-    with st.spinner('正在同步最新行情数据...'):
-        df, pe_val = get_full_analysis()
-        latest = df.iloc[-1]
+        # MACD
+        df["ema12"] = df["close"].ewm(span=12, adjust=False).mean()
+        df["ema26"] = df["close"].ewm(span=26, adjust=False).mean()
+        df["macd"] = df["ema12"] - df["ema26"]
+        df["signal"] = df["macd"].ewm(span=9, adjust=False).mean()
 
-    # 动态匹配生成的列名
-    upper_col = [c for c in df.columns if c.startswith('BBU')][0]
-    mid_col = [c for c in df.columns if c.startswith('BBM')][0]
-    lower_col = [c for c in df.columns if c.startswith('BBL')][0]
-    rsi_col = [c for c in df.columns if c.startswith('RSI')][0]
+        # PE
+        try:
+            pe_df = ak.stock_zh_index_pe_lg(symbol="000300.XSHG")
+            pe = round(pe_df["pe"].iloc[-1], 2)
+        except:
+            pe = "获取失败"
 
-    # 展示核心指标卡片
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("最新价格", f"{latest['close']:.2f}")
-    c2.metric("实时 PE", pe_val)
+        return df.dropna(), pe
 
-    # 计算位置百分比
-    pos = (latest['close'] - latest[mid_col]) / (latest[upper_col] - latest[mid_col])
-    c3.metric("BOLL 相对位置", f"{pos:.2f}")
-    c4.metric("RSI 强弱度", f"{latest[rsi_col]:.2f}")
+    except Exception as e:
+        return None, str(e)
 
-    # 绘制图表
-    st.subheader("📈 行情走势与布林带")
-    st.line_chart(df.tail(100).set_index('date')[['close', mid_col, upper_col, lower_col]])
+# -------------------------- 运行 --------------------------
+data_result = get_data(boll_period, boll_std)
 
-    st.subheader("📊 MACD 指标趋势")
-    # 查找 MACD 相关列
-    m_cols = [c for c in df.columns if 'MACD' in c]
-    st.area_chart(df.tail(100).set_index('date')[m_cols])
+if data_result[0] is None:
+    st.error(f"数据获取失败：{data_result[1]}")
+else:
+    df, pe_val = data_result
+    latest = df.iloc[-1]
 
-    st.success("网页运行正常，数据已更新。")
+    # 数据卡片（⚠️ 这里去掉了 key，不会报错）
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("最新价格", f"{latest['close']:.2f}")
+    col2.metric("PE-TTM", pe_val)
+    col3.metric("BOLL位置", f"{((latest['close']-latest['mid'])/(latest['upper']-latest['mid'])):.2f}")
+    col4.metric("RSI", f"{latest['rsi']:.2f}")
 
-# 就是这一块不能少！
-except Exception as e:
-    st.error(f"发现异常：{e}")
-    st.info("提示：请检查网络连接或尝试点击网页右上角的 'Rerun'。")
+    # 图表
+    st.subheader("📈 价格 + 布林带")
+    st.line_chart(df.tail(100).set_index("date")[["close", "mid", "upper", "lower"]])
+
+    st.subheader("📊 MACD")
+    st.line_chart(df.tail(100).set_index("date")[["macd", "signal"]])
+
+    st.success("✅ 数据加载完成，运行正常！")
