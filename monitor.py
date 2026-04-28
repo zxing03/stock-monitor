@@ -75,8 +75,12 @@ def run_analysis():
 
     for name, cn_code, of_code in MONITOR_LIST:
         df = get_data(cn_code, of_code)
-        if df is None or df.empty:
+        
+        # --- 关键修复开始：加上这判断 ---
+        if df is None or len(df) < 20: 
+            print(f"⚠ {name} 数据获取不足，跳过")
             continue
+        # --- 关键修复结束 ---
 
         # 计算指标
         df.ta.rsi(length=6, append=True)
