@@ -1,104 +1,113 @@
 import akshare as ak
 import pandas as pd
+import pandas_ta as ta
 import requests
 import time
 import warnings
+from datetime import datetime
 
+# 屏蔽不必要的警告
 warnings.filterwarnings("ignore")
 
-# ====================== 你的配置（只改这里！）======================
-SC_KEY = "SCT338034THtfushdWSoU1Eln5dzQTRvA7"  # 务必填你的真实key
+# --- 1. 核心配置 ---
+SC_KEY = "os.environ.get("SC_KEY")"
+RSI_UPPER = 80
+RSI_LOWER = 20
+
+# 监控清单：基于你的表格提取（已排除货币和债券基金）
+# 格式: [名称, 场内代码, 场外代码]
+MONITOR_LIST = [
+    ["新华中小市值", None, "519089"],
+    ["科创芯片ETF", "588800", "016886"],
+    ["人工智能ETF", "159819", "012894"],
+    ["纳指精选", None, "012351"],
+    ["纳指100", None, "006479"],
+    ["标普500ETF", "513500", "006075"],
+    ["恒生科技ETF", "513760", "013402"],
+    ["黄金ETF", "518800", "000219"],
+    ["纳指100ETF联接", "513870", "161130"],
+    ["金融科技ETF", "159851", "013487"],
+    ["全球成长精选", None, "012348"],
+    ["德邦稳盈混合", None, "010278"],
+    ["中证500低波", None, "003986"],
+    ["白银期货LOF", "161226", "001871"],
+    ["平安医疗健康", None, "010343"],
+    ["香港银行投资", None, "006435"],
+    ["港股通互联网", None, "013117"],
+    ["酒指数", None, "160632"],
+    ["红利低波", None, "007751"],
+    ["大宗商品ETF", "510170", "257060"],
+    ["有色金属ETF", "512400", "004432"]
+]
 
 
-# =================================================================
-
-# 重试装饰器：失败自动重试3次
-def retry(func):
-    def wrapper(*args, **kwargs):
-        for i in range(3):
-            try:
-                return func(*args, **kwargs)
-            except Exception as e:
-                print(f"第{i + 1}次重试失败: {e}")
-                time.sleep(2)
-        return None
-
-    return wrapper
-
-
-# Server酱推送（稳定版）
 def send_wechat(title, content):
-    if not SC_KEY or SC_KEY == "你的Server酱SendKey":
-        print("❌ 请填写Server酱SendKey！")
-        return
+    if not SC_KEY or "替换" in SC_KEY: return
     url = f"https://sctapi.ftqq.com/{SC_KEY}.send"
     try:
-        res = requests.post(
-            url,
-            data={"title": title, "desp": content},
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=15
-        )
-        print(f"✅ 推送成功 | 状态码: {res.status_code}")
-    except Exception as e:
-        print(f"❌ 推送失败: {e}")
+        requests.post(url, data={"title": title, "desp": content}, timeout=10)
+    except:
+        pass
 
 
-# 【稳定接口】获取沪深300数据（新浪接口，永不远程断开）
-@retry
-def get_hs300_data():
-    # 1. 稳定K线数据（新浪接口，核心修复！）
-    df = ak.stock_zh_index_daily(symbol="sh000300")
-    df = df.tail(60).copy()
-    df.reset_index(drop=True, inplace=True)
+def get_data(cn_code, of_code):
+    """优先获取场内实时性更好的数据"""
+    try:
+        if cn_code and cn_code != "-":
+            # 抓取场内ETF/LOF日线数据
+            symbol = f"sh{cn_code}" if cn_code.startswith(('5', '6')) else f"sz{cn_code}"
+            df = ak.stock_zh_index_daily_em(symbol=symbol).tail(100)
+            df = df.rename(columns={'close': 'close', 'date': 'date'})
+        else:
+            # 抓取场外基金净值数据
+            df = ak.fund_open_fund_info_em(symbol=of_code, indicator="单位净值走势")
+            df = df[['净值日期', '单位净值']].rename(columns={'净值日期': 'date', '单位净值': 'close'}).tail(100)
 
-    # 2. 兜底PE数据（避免估值接口报错）
-    current_pe = 12.8  # 沪深300真实PE兜底值
-
-    return df, current_pe
-
-
-# 手写布林带计算（无依赖，零报错）
-def calc_boll(df, n=20):
-    df['mid'] = df['close'].rolling(n).mean()
-    df['std'] = df['close'].rolling(n).std()
-    df['upper'] = df['mid'] + 2 * df['std']
-    df['lower'] = df['mid'] - 2 * df['std']
-    return df.dropna()
+        df['close'] = pd.to_numeric(df['close'])
+        return df
+    except:
+        return None
 
 
-# 主监控逻辑
-def main():
-    print(f"\n===== 沪深300监控 {time.strftime('%Y-%m-%d %H:%M:%S')} =====")
+def run_analysis():
+    print(f"正在进行盘中扫描: {datetime.now().strftime('%H:%M:%S')}")
+    all_alerts = []
 
-    # 1. 获取数据（稳定版）
-    data = get_hs300_data()
-    if not data:
-        send_wechat("⚠ 监控警告", "数据获取失败，但服务正常运行！")
-        return
-    df, current_pe = data
+    for name, cn_code, of_code in MONITOR_LIST:
+        df = get_data(cn_code, of_code)
+        if df is None or df.empty:
+            continue
 
-    # 2. 计算指标
-    df = calc_boll(df)
-    latest = df.iloc[-1]
-    close = round(latest['close'], 2)
-    boll_pos = round((close - latest['lower']) / (latest['upper'] - latest['lower']), 2)
+        # 计算指标
+        df.ta.rsi(length=6, append=True)
+        df.ta.bbands(length=20, std=2, append=True)
 
-    # 3. 调试打印（看控制台必出数据）
-    print(f"📊 最新价: {close} | PE: {current_pe} | 布林位置: {boll_pos}")
+        latest = df.iloc[-1]
+        price = latest['close']
 
-    # 4. 构造推送内容（永远有数据，绝不空白）
-    content = f"""
-### 沪深300 实时监控
-⏰ 时间：{time.strftime('%Y-%m-%d %H:%M:%S')}
-📈 价格：{close}
-📊 PE-TTM：{current_pe}
-📍 布林带位置：{boll_pos}
-    """
+        # 自动识别生成的指标列名
+        rsi_val = latest.filter(like='RSI').iloc[0]
+        bbl = latest.filter(like='BBL').iloc[0]
+        bbu = latest.filter(like='BBU').iloc[0]
 
-    # 5. 推送微信
-    send_wechat("沪深300 监控通知", content)
+        # 触发判断
+        res = []
+        if price <= bbl: res.append(f"触及BOLL下轨({price:.3f})")
+        if price >= bbu: res.append(f"触及BOLL上轨({price:.3f})")
+        if rsi_val <= RSI_LOWER: res.append(f"RSI超跌({rsi_val:.2f})")
+        if rsi_val >= RSI_UPPER: res.append(f"RSI超买({rsi_val:.2f})")
+
+        if res:
+            all_alerts.append(f"**{name}**: " + " / ".join(res))
+
+    if all_alerts:
+        content = "### 🔔 交易参考预警\n\n" + "\n\n".join(all_alerts) + \
+                  f"\n\n---\n**分析时间**：{datetime.now().strftime('%H:%M')}"
+        send_wechat("⚠️ 基金监控提醒", content)
+        print("🚩 发现符合条件的标的，已发送微信。")
+    else:
+        print("✅ 当前指标均在正常范围内。")
 
 
 if __name__ == "__main__":
-    main()
+    run_analysis()
