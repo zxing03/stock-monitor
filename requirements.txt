@@ -1,5 +1,4 @@
-# 极简稳定版，无任何版本冲突，云端100%安装成功
-streamlit
-pandas
 akshare
+pandas
+pandas_ta
 requests
