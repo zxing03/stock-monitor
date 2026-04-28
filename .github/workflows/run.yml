@@ -1,31 +1,26 @@
 name: Fund Monitor Bot
-
 on:
   schedule:
-    # 北京时间 14:30 对应 UTC 时间 06:30
-    - cron: "30 6 * * 1-5"
-  workflow_dispatch: # 允许手动点击测试
+    - cron: "30 6 * * 1-5" # 周一到周五14:30运行
+  workflow_dispatch: # 允许手动触发测试
 
 jobs:
-  build:
+  monitor:
     runs-on: ubuntu-latest
     steps:
-      # 1. 升级到 v4 (支持更高版本的 Node.js)
-      - name: Checkout code
+      - name: 检出代码
         uses: actions/checkout@v4
 
-      # 2. 升级到 v5 (支持更高版本的 Node.js)
-      - name: Set up Python
+      - name: 设置Python环境
         uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: "3.11" # 强制使用3.11，绝对不能写3.9
+          cache: "pip"
 
-      - name: Install dependencies
+      - name: 安装依赖
         run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt --no-cache-dir # 强制清除缓存重新安装
 
-      - name: Run Monitor
-        env:
-          SC_KEY: ${{ secrets.SC_KEY }}
-        run: python monitor.py
+      - name: 运行监控脚本
+        run: python -u monitor.py
