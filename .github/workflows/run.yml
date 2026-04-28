@@ -4,17 +4,19 @@ on:
   schedule:
     # 北京时间 14:30 对应 UTC 时间 06:30
     - cron: "30 6 * * 1-5"
-  workflow_dispatch: # 允许你手动点击按钮测试运行
+  workflow_dispatch: # 允许手动点击测试
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
+      # 1. 升级到 v4 (支持更高版本的 Node.js)
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
+      # 2. 升级到 v5 (支持更高版本的 Node.js)
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.9'
 
@@ -25,5 +27,5 @@ jobs:
 
       - name: Run Monitor
         env:
-          SC_KEY: ${{ secrets.SC_KEY }} # 关键：从保险柜读取 Key
+          SC_KEY: ${{ secrets.SC_KEY }}
         run: python monitor.py
