@@ -1,0 +1,29 @@
+name: Fund Monitor Bot
+
+on:
+  schedule:
+    # 北京时间 14:30 对应 UTC 时间 06:30
+    - cron: "30 6 * * 1-5"
+  workflow_dispatch: # 允许你手动点击按钮测试运行
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Monitor
+        env:
+          SC_KEY: ${{ secrets.SC_KEY }} # 关键：从保险柜读取 Key
+        run: python monitor.py
